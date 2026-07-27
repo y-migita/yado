@@ -174,6 +174,25 @@ export function assertValidPort(port: number): void {
   }
 }
 
+// Servers may open auxiliary listeners before (or besides) the port they were
+// told to use — next-server, for example, binds a second localhost port that
+// answers HTTP 404. The allocated port therefore always wins when it responds,
+// and a correction to another responding port is only allowed once the caller
+// signals that it has waited long enough for the allocated port to come up.
+export function chooseMeasuredPort(
+  allocatedPort: number,
+  respondingPorts: readonly number[],
+  graceElapsed: boolean,
+): number | null {
+  if (respondingPorts.includes(allocatedPort)) {
+    return allocatedPort;
+  }
+  if (respondingPorts.length > 0 && graceElapsed) {
+    return Math.min(...respondingPorts);
+  }
+  return null;
+}
+
 export function isPidAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) {
     return false;

@@ -98,7 +98,7 @@ type Guest = {
 3. `/allocate`で名前とポートを予約。
 4. 起動: `spawn(detached: true)`で新プロセスグループ、env に`PORT=<port>`。vite/astro系(devDependenciesまたはスクリプト文字列で判定)は引数でもポートを渡す: npm/pnpm/yarnは`run dev -- --port <port>`、bunは`run dev --port <port>`。
 5. stdout/stderrをターミナルと`logs/<name>.log`の両方へtee。開始時にバナー`yado ▸ http://<name>.local → :<port>`を出す。
-6. ポート実測: 起動後20秒まで、プロセスグループ内のLISTENを`lsof`で確認。割当と違うポートで立っていたら`PATCH`で台帳を訂正する(フレームワークがPORTを無視しても名前は正しく振れる)。20秒以内にLISTENしなければ警告(プロセスは生かす)。子が即死したらチェックアウトして同じexit codeで終了。
+6. ポート実測: 起動後20秒まで、プロセスグループ内のLISTENを`lsof`で確認し、HTTPプローブに応答するポートを探す。割当ポートが応答すれば常にそれを採用する。別のポートしか応答しない場合は、最初の応答から5秒の猶予を置いてから最小の応答ポートへ`PATCH`で台帳を訂正する(フレームワークがPORTを無視しても名前は正しく振れる)。猶予を置くのは、next-serverのように本体より先に補助リスナーを開くサーバーがあり、即決すると補助ポートへ誤訂正するため。20秒以内にLISTENしなければ警告(プロセスは生かす)。子が即死したらチェックアウトして同じexit codeで終了。
 7. SIGINT/SIGTERMをプロセスグループへ転送。子の終了でチェックアウトして同code終了。
 
 ### `yado stop [name] [--force]`

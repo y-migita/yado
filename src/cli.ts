@@ -22,10 +22,11 @@ import {
   processCwd,
   processTty,
 } from "./scan";
-import { STATE_PATHS, sleep } from "./util";
+import { STATE_PATHS, chooseMeasuredPort, sleep } from "./util";
 
 const DAEMON_START_TIMEOUT_MS = 8_000;
 const LISTEN_TIMEOUT_MS = 20_000;
+const ALLOCATED_PORT_GRACE_MS = 5_000;
 const DAEMON_SOURCE = fileURLToPath(new URL("./daemon.ts", import.meta.url));
 const PROJECT_ROOT = dirname(dirname(DAEMON_SOURCE));
 // A standalone binary produced by `bun build --compile` serves its sources from
@@ -482,6 +483,7 @@ async function runGuest(args: string[]): Promise<number> {
 
     const measurePort = async () => {
       const deadline = Date.now() + LISTEN_TIMEOUT_MS;
+      let firstRespondingAt: number | null = null;
       while (!childExited && Date.now() < deadline) {
         const ports = listeningPortsForProcessGroup(pid);
         if (ports.length > 0) {
@@ -494,10 +496,18 @@ async function runGuest(args: string[]): Promise<number> {
           const respondingPorts = probeResults
             .filter((result) => result.responds)
             .map((result) => result.port);
-          const measured = respondingPorts.includes(allocation.port)
-            ? allocation.port
-            : respondingPorts[0];
-          if (measured === undefined) {
+          if (respondingPorts.length > 0 && firstRespondingAt === null) {
+            firstRespondingAt = Date.now();
+          }
+          const graceElapsed =
+            firstRespondingAt !== null &&
+            Date.now() - firstRespondingAt >= ALLOCATED_PORT_GRACE_MS;
+          const measured = chooseMeasuredPort(
+            allocation.port,
+            respondingPorts,
+            graceElapsed,
+          );
+          if (measured === null) {
             await sleep(200);
             continue;
           }

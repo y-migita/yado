@@ -5,6 +5,7 @@ import type { Guest } from "../src/registry";
 import {
   InvalidGuestNameError,
   assertValidPort,
+  chooseMeasuredPort,
   expandHomePath,
   formatCommand,
   getStatePaths,
@@ -140,6 +141,25 @@ describe("path helpers", () => {
     expect(isPathInside("/work/repos/yado", "/work/repos")).toBe(true);
     expect(isPathInside("/work/repos-other/yado", "/work/repos")).toBe(false);
     expect(isPathInside("/work/repos/../secret", "/work/repos")).toBe(false);
+  });
+});
+
+describe("chooseMeasuredPort", () => {
+  test("always keeps the allocated port when it responds", () => {
+    expect(chooseMeasuredPort(62312, [62312, 62320], false)).toBe(62312);
+    expect(chooseMeasuredPort(62312, [62320, 62312], true)).toBe(62312);
+  });
+
+  test("waits for the allocated port before correcting to another one", () => {
+    // next-server opens an auxiliary localhost listener before the app socket;
+    // committing to it immediately would correct the registry to a 404 port.
+    expect(chooseMeasuredPort(62312, [62320], false)).toBeNull();
+    expect(chooseMeasuredPort(62312, [62320, 62330], true)).toBe(62320);
+  });
+
+  test("keeps polling while nothing responds", () => {
+    expect(chooseMeasuredPort(62312, [], false)).toBeNull();
+    expect(chooseMeasuredPort(62312, [], true)).toBeNull();
   });
 });
 
