@@ -32,29 +32,32 @@ Claude Codeのセッションが`bun run dev`を叩き、worktreeで動くCodex�
 
 ## できること
 
-- **空きポート自動割当** — ポート番号のことは二度と考えない
-- **`http://<プロジェクト名>.local/`** — mDNS(Bonjour)による安定した名前。
+- **空きポート自動割当**:ポート番号を自分で決める必要がなくなる
+- **`http://<プロジェクト名>.local/`**:mDNS(Bonjour)による安定した名前。
   同じWi-Fiの他デバイスからも開け、再起動でポートが変わってもURLは同じ
-- **自動チェックイン** — 素の`bun run dev`(npm/pnpmも)も検出して`.local`名が
-  付く。手癖はそのままでいい
-- **所有者を考慮した停止** — `yado stop`は他人が起動したサーバーを確認なしに
+- **自動チェックイン**:素の`bun run dev`のほか、npmやpnpmでの起動も検出して
+  `.local`名が付く。手癖はそのままでいい
+- **所有者を考慮した停止**:`yado stop`は他人が起動したサーバーを確認なしに
   触らない。エージェントの「推測してkill」がなくなる
-- **エージェントネイティブ** — [Agent Skill](https://skills.sh)として配布。
+- **エージェントネイティブ**:[Agent Skill](https://skills.sh)として配布。
   Claude CodeもCodexも、ルール(動いていれば再利用する、`kill`を直接実行
   しない、他人のサーバーは確認してから止める)を自動で覚える
-- **sudoゼロ、ランタイム依存ゼロ** — 必要なのはBunとmacOS標準ツールだけ
+- **sudoゼロ、依存ゼロ**:必要なのはmacOSだけ。ランタイムの導入も不要
 
 ## クイックスタート
 
-必要環境: macOS、[Bun](https://bun.sh) 1.2以上。
+必要環境はmacOSだけです。Bunなどのランタイム導入は要りません。
 
 ```bash
-# AIエージェント用(Claude Code, Codex, Cursor, ...) — スキルをインストール
-npx skills add y-migita/yado
+# 自分用:単一バイナリをインストール(sudo不要)
+curl -fsSL https://raw.githubusercontent.com/y-migita/yado/main/scripts/install.sh | bash
 
-# 自分用 — CLIをPATHに通す
-git clone https://github.com/y-migita/yado.git && cd yado && bun link
+# AIエージェント用(Claude Code, Codex, Cursorなど):スキルをインストール
+npx skills add y-migita/yado
 ```
+
+スキル経由のエージェントは、Bunがあればそれを使い、なければ初回にバイナリを
+自動取得して動きます。Bunが要るのは、このリポジトリ自体を開発するときだけです。
 
 あとは任意のプロジェクトで:
 

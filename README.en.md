@@ -45,19 +45,24 @@ an inn.
 - **Agent-native** — ships as an [Agent Skill](https://skills.sh): Claude Code
   and Codex learn the rules automatically: reuse running servers, never kill
   processes directly, ask before stopping servers they don't own
-- **Zero sudo, zero runtime deps** — just Bun and macOS built-ins
+- **Zero sudo, zero dependencies** — macOS is all you need; no runtime to
+  install
 
 ## Quick start
 
-Requirements: macOS, [Bun](https://bun.sh) ≥ 1.2.
+Requirements: macOS. No runtime to install — not even Bun.
 
 ```bash
+# for yourself — install the standalone binary (no sudo)
+curl -fsSL https://raw.githubusercontent.com/y-migita/yado/main/scripts/install.sh | bash
+
 # for AI agents (Claude Code, Codex, Cursor, ...) — installs the skill
 npx skills add y-migita/yado
-
-# for yourself — put the CLI on your PATH
-git clone https://github.com/y-migita/yado.git && cd yado && bun link
 ```
+
+Agents using the skill run on Bun when it's present and download the
+standalone binary on first run when it isn't. You only need Bun to
+develop yado itself.
 
 Then, in any project:
 

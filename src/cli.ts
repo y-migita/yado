@@ -5,7 +5,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { constants as osConstants } from "node:os";
+import { constants as osConstants, homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,6 +28,9 @@ const DAEMON_START_TIMEOUT_MS = 8_000;
 const LISTEN_TIMEOUT_MS = 20_000;
 const DAEMON_SOURCE = fileURLToPath(new URL("./daemon.ts", import.meta.url));
 const PROJECT_ROOT = dirname(dirname(DAEMON_SOURCE));
+// A standalone binary produced by `bun build --compile` serves its sources from
+// the virtual /$bunfs mount, so every module path resolves under it.
+const IS_COMPILED_BINARY = Bun.main.includes("$bunfs");
 
 class ApiError extends Error {
   readonly status: number;
@@ -90,12 +93,18 @@ async function ensureDaemon(): Promise<void> {
     return;
   }
 
-  const daemon = spawn(process.execPath, [DAEMON_SOURCE, "run"], {
-    cwd: PROJECT_ROOT,
-    detached: true,
-    stdio: "ignore",
-    env: process.env,
-  });
+  // The binary re-executes itself with the daemon subcommand because its
+  // sources are not on disk; /$bunfs is also not a usable working directory.
+  const daemon = spawn(
+    process.execPath,
+    IS_COMPILED_BINARY ? ["daemon", "run"] : [DAEMON_SOURCE, "run"],
+    {
+      cwd: IS_COMPILED_BINARY ? homedir() : PROJECT_ROOT,
+      detached: true,
+      stdio: "ignore",
+      env: process.env,
+    },
+  );
   const daemonSpawn = { error: null as Error | null };
   daemon.once("error", (error) => {
     daemonSpawn.error = error;

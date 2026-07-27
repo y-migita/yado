@@ -2,4 +2,46 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-exec bun "$SCRIPT_DIR/../src/cli.ts" "$@"
+if command -v bun >/dev/null 2>&1; then
+  exec bun "$SCRIPT_DIR/../src/cli.ts" "$@"
+fi
+
+# install.sh で導入済みの本体があればそれを使う(重複ダウンロードを避ける)
+INSTALLED="$HOME/.local/bin/yado"
+if [[ -x "$INSTALLED" ]]; then
+  exec "$INSTALLED" "$@"
+fi
+
+BIN_PATH="$HOME/.local/state/yado/bin/yado-bin"
+if [[ -x "$BIN_PATH" ]]; then
+  exec "$BIN_PATH" "$@"
+fi
+
+case "$(uname -m)" in
+  arm64) ARCH="arm64" ;;
+  x86_64) ARCH="x64" ;;
+  *)
+    echo "yado: 未対応のアーキテクチャです: $(uname -m)" >&2
+    exit 1
+    ;;
+esac
+
+URL="https://github.com/y-migita/yado/releases/latest/download/yado-darwin-$ARCH"
+echo "yado: 初回セットアップ: バイナリを取得しています..." >&2
+
+mkdir -p "$(dirname "$BIN_PATH")"
+TMP_FILE="$(mktemp "${TMPDIR:-/tmp}/yado-bin.XXXXXX")"
+trap 'rm -f "$TMP_FILE"' EXIT
+
+if ! curl -fsSL "$URL" -o "$TMP_FILE"; then
+  echo "yado: バイナリの取得に失敗しました: $URL" >&2
+  echo "yado: ネットワークを確認したうえで、次を手動で実行してください:" >&2
+  echo "  bash $SCRIPT_DIR/../scripts/install.sh" >&2
+  exit 1
+fi
+
+chmod +x "$TMP_FILE"
+mv "$TMP_FILE" "$BIN_PATH"
+trap - EXIT
+
+exec "$BIN_PATH" "$@"
