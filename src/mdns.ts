@@ -1,5 +1,3 @@
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-
 const ROUTE = "/sbin/route";
 const IPCONFIG = "/usr/sbin/ipconfig";
 const IFCONFIG = "/sbin/ifconfig";
@@ -44,18 +42,19 @@ export function parseGlobalIPv6(output: string): string | null {
 }
 
 function commandText(command: string, args: string[]): string {
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+  // Bun.spawnSync throws on a failed spawn instead of returning an error.
+  const result = Bun.spawnSync({
+    cmd: [command, ...args],
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  if (result.error) {
-    throw result.error;
-  }
-  if (result.status !== 0) {
-    const detail = String(result.stderr || result.stdout || "").trim();
+  const stdout = result.stdout.toString();
+  if (result.exitCode !== 0) {
+    const detail = (result.stderr.toString() || stdout || "").trim();
     throw new Error(`${command} ${args.join(" ")} failed${detail ? `: ${detail}` : ""}`);
   }
-  return String(result.stdout);
+  return stdout;
 }
 
 export function getAdvertisingAddress(
@@ -193,8 +192,18 @@ export function sweepOrphanedAdvertisers(
   }
 }
 
+// The subset of Bun's Subprocess the supervisor relies on, so tests can inject
+// a fake without emulating a process.
+export interface AdvertiserProcess {
+  readonly pid: number;
+  readonly exitCode: number | null;
+  readonly signalCode: NodeJS.Signals | null;
+  readonly exited: Promise<number>;
+  kill(signal?: number | NodeJS.Signals): void;
+}
+
 type Advertisement = {
-  child: ChildProcess;
+  child: AdvertiserProcess;
   intentional: boolean;
   closed: Promise<void>;
   resolveClosed: () => void;
@@ -205,7 +214,7 @@ type SpawnDnsSd = (
   command: string,
   args: string[],
   options: { stdio: "ignore" },
-) => ChildProcess;
+) => AdvertiserProcess;
 
 export interface MdnsSupervisorOptions {
   getAddress?: () => string;
@@ -237,7 +246,13 @@ export class MdnsSupervisor {
     this.#getAddress = options.getAddress ?? getAdvertisingAddress;
     this.#spawnProcess =
       options.spawnProcess ??
-      ((command, args, spawnOptions) => spawn(command, args, spawnOptions));
+      ((command, args) =>
+        Bun.spawn({
+          cmd: [command, ...args],
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "ignore",
+        }));
     this.#refreshIntervalMs = options.refreshIntervalMs ?? 15_000;
     this.#restartDelayMs = options.restartDelayMs ?? 1_000;
     this.#terminationGraceMs = options.terminationGraceMs ?? 1_000;
@@ -337,7 +352,7 @@ export class MdnsSupervisor {
       this.#restartTimers.delete(name);
     }
 
-    let child: ChildProcess;
+    let child: AdvertiserProcess;
     try {
       child = this.#spawnProcess(
         DNS_SD,
@@ -364,10 +379,7 @@ export class MdnsSupervisor {
     this.#children.set(name, advertisement);
     this.#log(`mDNS advertised: ${name}.local -> ${this.#address}:80`);
 
-    child.once("error", (error) => {
-      this.#log(`dns-sd ${name} error: ${error.message}`);
-    });
-    child.once("close", (code, signal) => {
+    void child.exited.then(() => {
       advertisement.resolveClosed();
       if (this.#children.get(name) !== advertisement) {
         return;
@@ -377,7 +389,7 @@ export class MdnsSupervisor {
         return;
       }
       this.#log(
-        `dns-sd ${name} exited unexpectedly (code=${code ?? "null"}, signal=${signal ?? "null"}); restarting`,
+        `dns-sd ${name} exited unexpectedly (code=${child.exitCode ?? "null"}, signal=${child.signalCode ?? "null"}); restarting`,
       );
       this.#scheduleRestart(name);
     });
@@ -435,7 +447,7 @@ export class MdnsSupervisor {
 }
 
 function signalChild(
-  child: ChildProcess,
+  child: AdvertiserProcess,
   signal: NodeJS.Signals,
   onError: (error: unknown) => void,
 ): void {

@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import {
   appendFileSync,
   chmodSync,
@@ -7,7 +6,6 @@ import {
   readFileSync,
   unlinkSync,
 } from "node:fs";
-import { createServer } from "node:net";
 import { basename, isAbsolute, resolve } from "node:path";
 
 import { MdnsSupervisor, sweepOrphanedAdvertisers } from "./mdns";
@@ -84,15 +82,14 @@ function errorMessage(error: unknown): string {
 }
 
 function acquirePidFile(path: string): void {
-  const result = spawnSync(
-    SHLOCK,
-    ["-f", path, "-p", String(process.pid)],
-    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-  );
-  if (result.error) {
-    throw result.error;
-  }
-  if (result.status === 0) {
+  // Bun.spawnSync throws on a failed spawn instead of returning an error.
+  const result = Bun.spawnSync({
+    cmd: [SHLOCK, "-f", path, "-p", String(process.pid)],
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (result.exitCode === 0) {
     return;
   }
 
@@ -102,7 +99,11 @@ function acquirePidFile(path: string): void {
   } catch {
     // shlock's exit status remains the authoritative acquisition result.
   }
-  const detail = String(result.stderr || result.stdout || "").trim();
+  const detail = (
+    result.stderr.toString() ||
+    result.stdout.toString() ||
+    ""
+  ).trim();
   throw new Error(
     existingPid > 0
       ? `yado daemon is already running (pid ${existingPid})`
@@ -133,23 +134,16 @@ function removeSocket(path: string): void {
 
 async function allocateFreePort(excluded: ReadonlySet<number>): Promise<number> {
   for (;;) {
-    const server = createServer();
-    server.unref();
-    await new Promise<void>((resolveListen, rejectListen) => {
-      server.once("error", rejectListen);
-      server.listen(0, "127.0.0.1", () => resolveListen());
+    // Binding port 0 lets the kernel pick a free ephemeral port; the listener
+    // is released immediately and the number handed to the Guest.
+    const listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { data: () => {} },
     });
-    const address = server.address();
-    const port = typeof address === "object" && address ? address.port : 0;
-    await new Promise<void>((resolveClose, rejectClose) => {
-      server.close((error) => {
-        if (error) {
-          rejectClose(error);
-        } else {
-          resolveClose();
-        }
-      });
-    });
+    listener.unref();
+    const port = listener.port;
+    listener.stop();
     if (port > 0 && !excluded.has(port)) {
       return port;
     }
@@ -167,12 +161,18 @@ function json(value: unknown, status = 200): Response {
 }
 
 function port80Diagnostic(): string {
-  const result = spawnSync(
-    LSOF,
-    ["-nP", "-iTCP:80", "-sTCP:LISTEN"],
-    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-  );
-  const output = String(result.stdout || result.stderr || "").trim();
+  let output = "";
+  try {
+    const result = Bun.spawnSync({
+      cmd: [LSOF, "-nP", "-iTCP:80", "-sTCP:LISTEN"],
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    output = (result.stdout.toString() || result.stderr.toString() || "").trim();
+  } catch {
+    // A diagnostic must never mask the bind failure it explains.
+  }
   return output || "(lsof found no listener)";
 }
 

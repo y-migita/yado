@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { EventEmitter } from "node:events";
-import type { ChildProcess } from "node:child_process";
 
 import {
+  type AdvertiserProcess,
   getAdvertisingAddress,
   MdnsSupervisor,
   type MdnsSupervisorOptions,
@@ -10,16 +9,24 @@ import {
   sweepOrphanedAdvertisers,
 } from "../src/mdns";
 
-class FakeChild extends EventEmitter {
+class FakeChild implements AdvertiserProcess {
+  readonly pid = 4242;
   readonly signals: Array<NodeJS.Signals | number> = [];
+  readonly exited: Promise<number>;
   exitCode: number | null = null;
   signalCode: NodeJS.Signals | null = null;
   onKill: ((signal: NodeJS.Signals | number) => void) | null = null;
+  #resolveExited!: (code: number) => void;
 
-  kill(signal: NodeJS.Signals | number = "SIGTERM"): boolean {
+  constructor() {
+    this.exited = new Promise<number>((resolve) => {
+      this.#resolveExited = resolve;
+    });
+  }
+
+  kill(signal: NodeJS.Signals | number = "SIGTERM"): void {
     this.signals.push(signal);
     this.onKill?.(signal);
-    return true;
   }
 
   close(
@@ -28,11 +35,7 @@ class FakeChild extends EventEmitter {
   ): void {
     this.exitCode = code;
     this.signalCode = signal;
-    this.emit("close", code, signal);
-  }
-
-  asChildProcess(): ChildProcess {
-    return this as unknown as ChildProcess;
+    this.#resolveExited(code ?? 0);
   }
 }
 
@@ -49,7 +52,7 @@ function makeSupervisor(
     spawnProcess: () => {
       const child = new FakeChild();
       children.push(child);
-      return child.asChildProcess();
+      return child;
     },
     ...overrides,
   });
@@ -242,7 +245,7 @@ describe("MdnsSupervisor child lifecycle", () => {
           queueMicrotask(() => child.close(null, "SIGTERM"));
         };
         children.push(child);
-        return child.asChildProcess();
+        return child;
       },
     });
 
@@ -344,19 +347,23 @@ describe("MdnsSupervisor child lifecycle", () => {
     await supervisor.stop();
   });
 
-  test("an async spawn error and close schedules exactly one restart", async () => {
+  test("an unexpected exit schedules exactly one restart", async () => {
     const children: FakeChild[] = [];
     const logs: string[] = [];
     const supervisor = makeSupervisor(children, {}, logs);
     await supervisor.start(["guest"]);
 
-    children[0]?.emit("error", new Error("spawn failed"));
     children[0]?.close(1, null);
     await waitFor(() => children.length === 2);
     await Bun.sleep(15);
     expect(children).toHaveLength(2);
-    expect(logs.some((line) => line.includes("spawn failed"))).toBe(true);
-    expect(logs.some((line) => line.includes("restarting"))).toBe(true);
+    expect(
+      logs.filter(
+        (line) =>
+          line ===
+          "dns-sd guest exited unexpectedly (code=1, signal=null); restarting",
+      ),
+    ).toHaveLength(1);
 
     children[1]!.onKill = () => {
       queueMicrotask(() => children[1]?.close(null, "SIGTERM"));
@@ -366,25 +373,33 @@ describe("MdnsSupervisor child lifecycle", () => {
 
   test("a synchronous spawn failure is retried without escaping start", async () => {
     const children: FakeChild[] = [];
+    const logs: string[] = [];
     let attempts = 0;
-    const supervisor = makeSupervisor(children, {
-      spawnProcess: () => {
-        attempts += 1;
-        if (attempts === 1) {
-          throw new Error("synchronous spawn failure");
-        }
-        const child = new FakeChild();
-        child.onKill = () => {
-          queueMicrotask(() => child.close(null, "SIGTERM"));
-        };
-        children.push(child);
-        return child.asChildProcess();
+    const supervisor = makeSupervisor(
+      children,
+      {
+        spawnProcess: () => {
+          attempts += 1;
+          if (attempts === 1) {
+            throw new Error("synchronous spawn failure");
+          }
+          const child = new FakeChild();
+          child.onKill = () => {
+            queueMicrotask(() => child.close(null, "SIGTERM"));
+          };
+          children.push(child);
+          return child;
+        },
       },
-    });
+      logs,
+    );
 
     await expect(supervisor.start(["guest"])).resolves.toBeUndefined();
     await waitFor(() => attempts === 2);
     expect(children).toHaveLength(1);
+    expect(logs).toContain(
+      "dns-sd guest spawn failed: synchronous spawn failure",
+    );
     await supervisor.stop();
   });
 });

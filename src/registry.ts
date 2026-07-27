@@ -1,10 +1,4 @@
-import {
-  mkdir,
-  readFile,
-  rename,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, rename, unlink } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
 
 import { assertValidPort, isPidAlive } from "./util";
@@ -153,7 +147,7 @@ export function serializeRegistry(guests: readonly Guest[]): string {
 
 export async function readRegistryFile(filePath: string): Promise<Guest[]> {
   try {
-    return parseRegistryJson(await readFile(filePath, "utf8"));
+    return parseRegistryJson(await Bun.file(filePath).text());
   } catch (error) {
     if ((error as { code?: string }).code === "ENOENT") {
       return [];
@@ -170,7 +164,8 @@ export async function writeRegistryFile(
   await mkdir(dirname(filePath), { recursive: true });
 
   try {
-    await writeFile(temporaryPath, serializeRegistry(guests), "utf8");
+    await Bun.write(temporaryPath, serializeRegistry(guests));
+    // rename() keeps the swap atomic; Bun has no equivalent.
     await rename(temporaryPath, filePath);
   } catch (error) {
     await unlink(temporaryPath).catch(() => undefined);

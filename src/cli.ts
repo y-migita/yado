@@ -1,13 +1,6 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import {
-  createWriteStream,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync } from "node:fs";
 import { constants as osConstants, homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import {
   assertSupportedPlatform,
@@ -27,7 +20,7 @@ import { STATE_PATHS, chooseMeasuredPort, sleep } from "./util";
 const DAEMON_START_TIMEOUT_MS = 8_000;
 const LISTEN_TIMEOUT_MS = 20_000;
 const ALLOCATED_PORT_GRACE_MS = 5_000;
-const DAEMON_SOURCE = fileURLToPath(new URL("./daemon.ts", import.meta.url));
+const DAEMON_SOURCE = Bun.fileURLToPath(new URL("./daemon.ts", import.meta.url));
 const PROJECT_ROOT = dirname(dirname(DAEMON_SOURCE));
 // A standalone binary produced by `bun build --compile` serves its sources from
 // the virtual /$bunfs mount, so every module path resolves under it.
@@ -48,8 +41,52 @@ type ChildResult = {
   signal: NodeJS.Signals | null;
 };
 
+type LogSink = {
+  write: (chunk: string | Uint8Array) => void;
+  end: () => Promise<void>;
+};
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// A FileSink opens at offset 0 without truncating, so the caller must empty the
+// log first to keep one file per launch.
+function createLogSink(path: string): LogSink {
+  const sink = Bun.file(path).writer();
+  let failed = false;
+  const fail = (error: unknown) => {
+    failed = true;
+    console.error(`yado: log write failed: ${errorMessage(error)}`);
+  };
+
+  return {
+    write(chunk) {
+      if (failed) {
+        return;
+      }
+      try {
+        sink.write(chunk);
+        // Flush every chunk so `tail -f` on the log keeps up with the Guest.
+        const flushed = sink.flush();
+        if (typeof flushed !== "number") {
+          void flushed.catch(fail);
+        }
+      } catch (error) {
+        fail(error);
+      }
+    },
+    async end() {
+      if (failed) {
+        return;
+      }
+      try {
+        await sink.end();
+      } catch (error) {
+        fail(error);
+      }
+    },
+  };
 }
 
 async function apiResponse(
@@ -96,29 +133,27 @@ async function ensureDaemon(): Promise<void> {
 
   // The binary re-executes itself with the daemon subcommand because its
   // sources are not on disk; /$bunfs is also not a usable working directory.
-  const daemon = spawn(
-    process.execPath,
-    IS_COMPILED_BINARY ? ["daemon", "run"] : [DAEMON_SOURCE, "run"],
-    {
+  let daemon: Bun.Subprocess<"ignore", "ignore", "ignore">;
+  try {
+    daemon = Bun.spawn({
+      cmd: [
+        process.execPath,
+        ...(IS_COMPILED_BINARY ? ["daemon", "run"] : [DAEMON_SOURCE, "run"]),
+      ],
       cwd: IS_COMPILED_BINARY ? homedir() : PROJECT_ROOT,
       detached: true,
-      stdio: "ignore",
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
       env: process.env,
-    },
-  );
-  const daemonSpawn = { error: null as Error | null };
-  daemon.once("error", (error) => {
-    daemonSpawn.error = error;
-  });
+    });
+  } catch (error) {
+    throw new Error(`cannot start yado daemon: ${errorMessage(error)}`);
+  }
   daemon.unref();
 
   const deadline = Date.now() + DAEMON_START_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    if (daemonSpawn.error !== null) {
-      throw new Error(
-        `cannot start yado daemon: ${daemonSpawn.error.message}`,
-      );
-    }
     if (await daemonHealth()) {
       return;
     }
@@ -127,7 +162,7 @@ async function ensureDaemon(): Promise<void> {
 
   let detail = "";
   try {
-    const log = readFileSync(STATE_PATHS.daemonLogPath, "utf8").trim();
+    const log = (await Bun.file(STATE_PATHS.daemonLogPath).text()).trim();
     detail = log ? `\n${log.split(/\r?\n/).slice(-8).join("\n")}` : "";
   } catch {
     // A missing daemon log is reported through the timeout itself.
@@ -234,27 +269,24 @@ function parseMainInvocation(args: string[]): {
   return { requestedName, explicitArgv: null };
 }
 
-function waitForSpawn(child: ChildProcess): Promise<void> {
-  return new Promise((resolveSpawn, rejectSpawn) => {
-    const onSpawn = () => {
-      child.off("error", onError);
-      resolveSpawn();
-    };
-    const onError = (error: Error) => {
-      child.off("spawn", onSpawn);
-      rejectSpawn(error);
-    };
-    child.once("spawn", onSpawn);
-    child.once("error", onError);
-  });
-}
-
-function childCompletion(child: ChildProcess): Promise<ChildResult> {
-  return new Promise((resolveChild) => {
-    child.once("close", (code, signal) => {
-      resolveChild({ code, signal });
-    });
-  });
+async function teeStream(
+  stream: ReadableStream<Uint8Array>,
+  out: NodeJS.WriteStream,
+  log: () => LogSink | null,
+): Promise<void> {
+  const reader = stream.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        return;
+      }
+      out.write(value);
+      log()?.write(value);
+    }
+  } catch {
+    // A broken pipe ends the tee; the child's exit is reported on its own.
+  }
 }
 
 function exitCodeFor(result: ChildResult): number {
@@ -303,29 +335,6 @@ async function terminateProcessTarget(
   }
 }
 
-async function endLogStream(
-  stream: ReturnType<typeof createWriteStream>,
-): Promise<void> {
-  if (stream.closed || stream.destroyed) {
-    return;
-  }
-  await new Promise<void>((resolveEnd) => {
-    let finished = false;
-    const finish = () => {
-      if (finished) {
-        return;
-      }
-      finished = true;
-      resolveEnd();
-    };
-    stream.once("finish", finish);
-    stream.once("close", finish);
-    stream.end();
-    const timeout = setTimeout(finish, 1_000);
-    timeout.unref();
-  });
-}
-
 async function runGuest(args: string[]): Promise<number> {
   const { requestedName, explicitArgv } = parseMainInvocation(args);
   await ensureDaemon();
@@ -370,7 +379,7 @@ async function runGuest(args: string[]): Promise<number> {
   let childExited = false;
   let guest: Guest | null = null;
   let registered = false;
-  let log: ReturnType<typeof createWriteStream> | null = null;
+  let log: LogSink | null = null;
   const signalHandlers = new Map<NodeJS.Signals, () => void>();
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     const handler = () => {
@@ -402,42 +411,40 @@ async function runGuest(args: string[]): Promise<number> {
 
     mkdirSync(STATE_PATHS.logsDir, { recursive: true });
     const logFile = join(STATE_PATHS.logsDir, `${allocation.name}.log`);
-    writeFileSync(
-      logFile,
-      `[${new Date().toISOString()}] ${launch.display}\n`,
-      "utf8",
-    );
-    log = createWriteStream(logFile, { flags: "a" });
-    log.on("error", (error) => {
-      console.error(`yado: log write failed: ${errorMessage(error)}`);
-    });
+    await Bun.write(logFile, "");
+    log = createLogSink(logFile);
+    log.write(`[${new Date().toISOString()}] ${launch.display}\n`);
 
     if (receivedSignal !== null) {
       return exitCodeFor({ code: null, signal: receivedSignal });
     }
 
-    const child = spawn(launch.argv[0]!, launch.argv.slice(1), {
-      cwd,
-      env: { ...process.env, PORT: String(allocation.port) },
-      detached: true,
-      stdio: ["inherit", "pipe", "pipe"],
-    });
-    const completion = childCompletion(child);
-
-    child.stdout?.on("data", (chunk: Buffer) => {
-      process.stdout.write(chunk);
-      log?.write(chunk);
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      process.stderr.write(chunk);
-      log?.write(chunk);
-    });
-
+    let child: Bun.Subprocess<"inherit", "pipe", "pipe">;
     try {
-      await waitForSpawn(child);
+      child = Bun.spawn({
+        cmd: launch.argv,
+        cwd,
+        env: { ...process.env, PORT: String(allocation.port) },
+        detached: true,
+        stdin: "inherit",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
     } catch (error) {
       throw new Error(`cannot start ${launch.display}: ${errorMessage(error)}`);
     }
+
+    const tees = Promise.all([
+      teeStream(child.stdout, process.stdout, () => log),
+      teeStream(child.stderr, process.stderr, () => log),
+    ]);
+    const completion = (async (): Promise<ChildResult> => {
+      await child.exited;
+      // The tees must drain before the exit code is reported, so no Guest
+      // output is lost on the way to the terminal and the log file.
+      await tees;
+      return { code: child.exitCode, signal: child.signalCode };
+    })();
 
     const pid = child.pid;
     if (!pid) {
@@ -569,7 +576,7 @@ async function runGuest(args: string[]): Promise<number> {
       });
     }
     if (log) {
-      await endLogStream(log);
+      await log.end();
     }
   }
 }

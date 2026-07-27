@@ -1,6 +1,5 @@
-import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { basename } from "node:path";
 
 import type { Guest } from "./registry";
@@ -124,7 +123,7 @@ export async function probeHttpPort(
 
 export async function loadScanRoots(configPath: string): Promise<string[]> {
   try {
-    const parsed: unknown = JSON.parse(await readFile(configPath, "utf8"));
+    const parsed: unknown = JSON.parse(await Bun.file(configPath).text());
     if (
       typeof parsed === "object" &&
       parsed !== null &&
@@ -148,71 +147,70 @@ export async function loadScanRoots(configPath: string): Promise<string[]> {
 }
 
 function runText(command: string, args: string[]): string | null {
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.error || (result.status !== 0 && !result.stdout)) {
+  let result: Bun.SyncSubprocess<"pipe", "pipe">;
+  try {
+    result = Bun.spawnSync({
+      cmd: [command, ...args],
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  } catch {
     return null;
   }
-  return String(result.stdout);
+  const stdout = result.stdout.toString();
+  if (result.exitCode !== 0 && stdout.length === 0) {
+    return null;
+  }
+  return stdout;
 }
 
-export function runTextAsync(
+export async function runTextAsync(
   command: string,
   args: readonly string[],
 ): Promise<string | null> {
-  return new Promise((resolve) => {
-    let settled = false;
-    let stdout = "";
-    let timeout: ReturnType<typeof setTimeout> | null = null;
+  let child: Bun.Subprocess<"ignore", "pipe", "ignore">;
+  try {
+    child = Bun.spawn({
+      cmd: [command, ...args],
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+  } catch {
+    return null;
+  }
 
-    const settle = (value: string | null) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      if (timeout !== null) {
-        clearTimeout(timeout);
-      }
-      resolve(value);
-    };
-
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
     try {
-      const child = spawn(command, [...args], {
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      child.stdout.setEncoding("utf8");
-      child.stdout.on("data", (chunk: string) => {
-        stdout += chunk;
-      });
-      child.stdout.once("error", () => {
-        try {
-          child.kill("SIGKILL");
-        } catch {
-          // The child already exited.
-        }
-        settle(null);
-      });
-      child.once("error", () => {
-        settle(null);
-      });
-      child.once("close", (code) => {
-        settle(code !== 0 && stdout.length === 0 ? null : stdout);
-      });
-      timeout = setTimeout(() => {
-        try {
-          child.kill("SIGKILL");
-        } catch {
-          // The child already exited.
-        }
-        settle(null);
-      }, PROCESS_INSPECTION_TIMEOUT_MS);
-      timeout.unref();
+      child.kill("SIGKILL");
     } catch {
-      settle(null);
+      // The child already exited.
     }
-  });
+  }, PROCESS_INSPECTION_TIMEOUT_MS);
+  timeout.unref();
+
+  try {
+    let stdout: string | null = null;
+    try {
+      stdout = await new Response(child.stdout).text();
+    } catch {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // The child already exited.
+      }
+    }
+    const exitCode = await child.exited;
+    if (timedOut || stdout === null) {
+      return null;
+    }
+    return exitCode !== 0 && stdout.length === 0 ? null : stdout;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export function listListeningSockets(): ListeningSocket[] {
@@ -330,14 +328,12 @@ async function notifyCheckIn(guest: Guest, log: (message: string) => void) {
 
   const script = `display notification "${appleScriptString(message)}" with title "yado"`;
   try {
-    const notification = spawn(OSASCRIPT, ["-e", script], {
+    const notification = Bun.spawn({
+      cmd: [OSASCRIPT, "-e", script],
       detached: true,
-      stdio: "ignore",
-    });
-    notification.once("error", (error) => {
-      log(
-        `desktop notification failed for ${guest.name}: ${errorMessage(error)}`,
-      );
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
     });
     notification.unref();
   } catch (error) {

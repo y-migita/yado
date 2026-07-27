@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { assertValidPort, formatCommand } from "./util";
@@ -115,7 +115,7 @@ export async function readProjectPackageJson(
   let source: string;
 
   try {
-    source = await readFile(packagePath, "utf8");
+    source = await Bun.file(packagePath).text();
   } catch (error) {
     throw new ProjectDetectionError(
       `Cannot read ${packagePath}; use "yado -- <cmd...>" or add package.json`,
