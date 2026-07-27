@@ -10,7 +10,7 @@ import {
 import { createServer } from "node:net";
 import { basename, isAbsolute, resolve } from "node:path";
 
-import { MdnsSupervisor } from "./mdns";
+import { MdnsSupervisor, sweepOrphanedAdvertisers } from "./mdns";
 import { createProxyOptions } from "./proxy";
 import { type Guest, RegistryStore, isGuest } from "./registry";
 import { type AutoCheckInCandidate, GuestScanner } from "./scan";
@@ -355,6 +355,7 @@ async function runDaemonLifecycle(
       );
     }
 
+    sweepOrphanedAdvertisers(log);
     await mdns.start(["yado", ...registry.list().map((guest) => guest.name)]);
 
     controlServer = Bun.serve({

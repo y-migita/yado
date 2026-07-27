@@ -6,6 +6,8 @@ import {
   getAdvertisingAddress,
   MdnsSupervisor,
   type MdnsSupervisorOptions,
+  parseOrphanedAdvertiserPids,
+  sweepOrphanedAdvertisers,
 } from "../src/mdns";
 
 class FakeChild extends EventEmitter {
@@ -65,6 +67,65 @@ async function waitFor(
     await Bun.sleep(2);
   }
 }
+
+describe("parseOrphanedAdvertiserPids", () => {
+  const psOutput = [
+    "  123     1 /usr/bin/dns-sd -P yado _http._tcp local 80 yado.local 240a:61:220b:7b13::1",
+    "  456 98519 /usr/bin/dns-sd -P yado _http._tcp local 80 yado.local 240a:61:11b:eaa::1",
+    "  789     1 /usr/bin/dns-sd -P my-app _http._tcp local 80 my-app.local 192.168.1.24",
+    " 1000     1 /usr/bin/dns-sd -B _http._tcp local",
+    " 2000     1 /usr/local/bin/other-tool dns-sd -P x _http._tcp local 80 x.local 1.2.3.4",
+  ].join("\n");
+
+  test("selects only launchd-reparented yado advertisements", () => {
+    expect(parseOrphanedAdvertiserPids(psOutput)).toEqual([123, 789]);
+  });
+
+  test("returns an empty list when nothing matches", () => {
+    expect(parseOrphanedAdvertiserPids("  1  0 /sbin/launchd\n")).toEqual([]);
+  });
+});
+
+describe("sweepOrphanedAdvertisers", () => {
+  test("kills each orphan and logs the sweep", () => {
+    const killed: number[] = [];
+    const logs: string[] = [];
+    sweepOrphanedAdvertisers(
+      (message) => logs.push(message),
+      () =>
+        "  123     1 /usr/bin/dns-sd -P yado _http._tcp local 80 yado.local 1.2.3.4\n",
+      (pid) => killed.push(pid),
+    );
+    expect(killed).toEqual([123]);
+    expect(logs).toEqual(["killed orphaned dns-sd advertiser (pid 123)"]);
+  });
+
+  test("survives a ps failure and a kill on an exited process", () => {
+    const logs: string[] = [];
+    sweepOrphanedAdvertisers(
+      (message) => logs.push(message),
+      () => {
+        throw new Error("ps unavailable");
+      },
+      () => {
+        throw new Error("kill should not be called");
+      },
+    );
+    expect(logs).toEqual(["orphaned dns-sd sweep failed: ps unavailable"]);
+
+    sweepOrphanedAdvertisers(
+      (message) => logs.push(message),
+      () =>
+        "  123     1 /usr/bin/dns-sd -P yado _http._tcp local 80 yado.local 1.2.3.4\n",
+      () => {
+        const error = new Error("no such process") as NodeJS.ErrnoException;
+        error.code = "ESRCH";
+        throw error;
+      },
+    );
+    expect(logs).toEqual(["orphaned dns-sd sweep failed: ps unavailable"]);
+  });
+});
 
 describe("getAdvertisingAddress", () => {
   test("uses the IPv4 default route when it is available", () => {

@@ -4,6 +4,7 @@ const ROUTE = "/sbin/route";
 const IPCONFIG = "/usr/sbin/ipconfig";
 const IFCONFIG = "/sbin/ifconfig";
 const DNS_SD = "/usr/bin/dns-sd";
+const PS = "/bin/ps";
 
 export type MdnsLogger = (message: string) => void;
 type CommandText = (command: string, args: string[]) => string;
@@ -148,6 +149,48 @@ function requireDefaultInterface(output: string): string {
     throw new Error("response did not contain an interface");
   }
   return interfaceName;
+}
+
+// Matches `ps -ax -o pid=,ppid=,command=` lines for our own dns-sd proxy
+// advertisements. `dns-sd -P` children survive a daemon crash (they are
+// reparented to launchd, so ppid becomes 1) and keep advertising the address
+// captured at spawn time. Once the address goes stale, the leftover records
+// poison resolution, and a fresh child for the same name flaps in an mDNS
+// name-conflict restart loop.
+const ORPHANED_ADVERTISER_LINE =
+  /^\s*(\d+)\s+(\d+)\s+\/usr\/bin\/dns-sd -P \S+ _http\._tcp local 80 \S+\.local(?:\s|$)/;
+
+export function parseOrphanedAdvertiserPids(output: string): number[] {
+  const pids: number[] = [];
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.match(ORPHANED_ADVERTISER_LINE);
+    if (match && Number(match[2]) === 1) {
+      pids.push(Number(match[1]));
+    }
+  }
+  return pids;
+}
+
+export function sweepOrphanedAdvertisers(
+  log: MdnsLogger = () => {},
+  runCommand: CommandText = commandText,
+  kill: (pid: number) => void = (pid) => process.kill(pid, "SIGTERM"),
+): void {
+  let output = "";
+  try {
+    output = runCommand(PS, ["-ax", "-o", "pid=,ppid=,command="]);
+  } catch (error) {
+    log(`orphaned dns-sd sweep failed: ${errorMessage(error)}`);
+    return;
+  }
+  for (const pid of parseOrphanedAdvertiserPids(output)) {
+    try {
+      kill(pid);
+      log(`killed orphaned dns-sd advertiser (pid ${pid})`);
+    } catch {
+      // The process may already be gone.
+    }
+  }
 }
 
 type Advertisement = {
