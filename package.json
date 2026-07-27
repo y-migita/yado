@@ -1,0 +1,18 @@
+{
+  "name": "yado",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "yado": "./bin/yado"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "smoke": "bash scripts/smoke.sh"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "typescript": "5.9.3"
+  }
+}
