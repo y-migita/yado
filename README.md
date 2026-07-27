@@ -2,142 +2,138 @@
   <img src="assets/logo.svg" alt="yado" width="360">
 </p>
 
+<p align="center"><b>日本語</b> | <a href="README.en.md">English</a></p>
+
 # yado
 
-**Dev servers, checked in like guests.** yado starts your local dev server on an
-automatically allocated free port and makes it reachable at
-`http://<project>.local/` — from your Mac, your iPhone, and anything else on the
-same Wi-Fi. No port numbers, no `EADDRINUSE`, no sudo.
+**dev serverを、宿のゲストのようにチェックイン。** yadoはローカルのdev serverを
+空きポートで自動起動し、`http://<プロジェクト名>.local/` で開けるようにします。
+Macからも、iPhoneからも、同じWi-Fiのどのデバイスからも。ポート番号の暗記も、
+`EADDRINUSE`も、sudoも要りません。
 
-[日本語版 README はこちら](README.ja.md)
+## なぜ作ったか
 
-## Why
+AIエージェントとの開発は`localhost:3000`を壊しました。
 
-Coding with AI agents broke `localhost:3000`.
+Claude Codeのセッションが`bun run dev`を叩き、worktreeで動くCodexのセッションが
+別のdev serverを立ち上げ、自分のターミナルでもさらに1つ動いている。全員が
+3000番を取り合います。
+ましなケースで`EADDRINUSE`、最悪のケースではエージェントが「親切に」
+`lsof -i :3000 | kill`を実行して、あなたが使っていたサーバーを落とします。
+そしてスマホで開いていたあのアプリが`:3000`だったか`:3001`だったか`:5173`
+だったかは、誰も覚えていません。
 
-One Claude Code session starts `bun run dev`, a Codex session in a worktree
-starts another, and you have a third one running in your own terminal. They all
-want port 3000. The best case is `EADDRINUSE`; the worst case is an agent
-"helpfully" running `lsof -i :3000 | kill` and killing the server *you* were
-using.
-Meanwhile you can never remember whether the app on your phone was `:3000`,
-`:3001`, or `:5173`.
+根本原因は、ポートという共有資源に調停者がいないことです。yadoはその調停者に
+なります。人間もエージェントも通る1つの入口、誰が何を動かしているかの台帳、
+そして変わりやすいポート番号に代わる安定した名前です。
 
-The root cause is that ports are a shared resource with no arbiter. yado is
-that arbiter: one shared entrance for humans and agents, a ledger of who is
-running what, and stable names instead of ephemeral port numbers.
+名前は、AIエージェントの普及でこの問題が切実になる何年も前に本質を捉えていた
+[hotel](https://github.com/typicode/hotel)へのオマージュです。
 
-The name is a homage to [hotel](https://github.com/typicode/hotel), which got
-this right years before AI agents made it urgent. *Yado* (宿) is Japanese for
-an inn.
+## できること
 
-## What you get
+- **空きポート自動割当** — ポート番号のことは二度と考えない
+- **`http://<プロジェクト名>.local/`** — mDNS(Bonjour)による安定した名前。
+  同じWi-Fiの他デバイスからも開け、再起動でポートが変わってもURLは同じ
+- **自動チェックイン** — 素の`bun run dev`(npm/pnpmも)も検出して`.local`名が
+  付く。手癖はそのままでいい
+- **所有者を考慮した停止** — `yado stop`は他人が起動したサーバーを確認なしに
+  触らない。エージェントの「推測してkill」がなくなる
+- **エージェントネイティブ** — [Agent Skill](https://skills.sh)として配布。
+  Claude CodeもCodexも、ルール(動いていれば再利用する、`kill`を直接実行
+  しない、他人のサーバーは確認してから止める)を自動で覚える
+- **sudoゼロ、ランタイム依存ゼロ** — 必要なのはBunとmacOS標準ツールだけ
 
-- **Automatic free ports** — never think about port numbers again
-- **`http://<project>.local/`** — stable names via mDNS (Bonjour), reachable
-  from other devices on the same Wi-Fi. The URL survives restarts even when
-  the port changes
-- **Auto check-in** — plain `bun run dev` (or npm/pnpm) is detected and gets a
-  `.local` name too. Muscle memory keeps working
-- **Owner-aware stop** — `yado stop` refuses to touch servers started by
-  someone else without confirmation. Agents no longer guess which server to
-  stop
-- **Agent-native** — ships as an [Agent Skill](https://skills.sh): Claude Code
-  and Codex learn the rules automatically: reuse running servers, never kill
-  processes directly, ask before stopping servers they don't own
-- **Zero sudo, zero runtime deps** — just Bun and macOS built-ins
+## クイックスタート
 
-## Quick start
-
-Requirements: macOS, [Bun](https://bun.sh) ≥ 1.2.
+必要環境: macOS、[Bun](https://bun.sh) 1.2以上。
 
 ```bash
-# for AI agents (Claude Code, Codex, Cursor, ...) — installs the skill
+# AIエージェント用(Claude Code, Codex, Cursor, ...) — スキルをインストール
 npx skills add y-migita/yado
 
-# for yourself — put the CLI on your PATH
+# 自分用 — CLIをPATHに通す
 git clone https://github.com/y-migita/yado.git && cd yado && bun link
 ```
 
-Then, in any project:
+あとは任意のプロジェクトで:
 
 ```bash
 yado
 # yado ▸ http://myapp.local → :3211  (log: ~/.local/state/yado/logs/myapp.log)
 ```
 
-Open `http://myapp.local/` on your Mac or your phone. That's it.
+Macでもスマホでも`http://myapp.local/`を開くだけです。
 
-## Usage
+## 使い方
 
 ```bash
-yado                  # start: auto-detects bun/npm/pnpm and the "dev" script
-yado -- vite --host   # start an explicit command instead
-yado --name demo      # override the name (default: directory name)
-yado ls               # what's running, where, and who owns it
-yado stop [name]      # graceful stop (whole process group); asks if it's not yours
+yado                  # 起動: bun/npm/pnpmと"dev"スクリプトを自動判別
+yado -- vite --host   # コマンドを明示して起動
+yado --name demo      # 名前を上書き(デフォルトはディレクトリ名)
+yado ls               # 何がどこで動いていて、誰の所有か
+yado stop [name]      # 行儀よく停止(プロセスグループごと)。他人のものなら確認を求める
 ```
 
-Servers started without yado are **auto-checked-in**: a daemon notices new
-listeners in your projects directory, gives them a `.local` name, and tells you
-in the terminal you started them from.
+yadoを通さず起動したサーバーも**自動チェックイン**されます。デーモンが
+プロジェクトディレクトリ配下の新しいLISTENを見つけて`.local`名を付け、
+起動したターミナルにその旨を1行お知らせします。
 
-## How it works
+## 仕組み
 
 ```mermaid
 flowchart LR
-    phone["iPhone / iPad<br/>same Wi-Fi"] -->|"http://myapp.local"| proxy
-    browser["Mac browser"] -->|"http://myapp.local"| proxy
-    subgraph mac["your Mac"]
-        proxy["yado daemon<br/>proxy on :80"] -->|":3211"| a["myapp<br/>dev server"]
+    phone["iPhone / iPad<br/>同じWi-Fi"] -->|"http://myapp.local"| proxy
+    browser["Macのブラウザ"] -->|"http://myapp.local"| proxy
+    subgraph mac["あなたのMac"]
+        proxy["yadoデーモン<br/>:80のプロキシ"] -->|":3211"| a["myapp<br/>dev server"]
         proxy -->|":3212"| b["other-app<br/>dev server"]
-        proxy --- ledger["ledger<br/>(name, port, owner)"]
-        dnssd["dns-sd<br/>mDNS advertiser"]
+        proxy --- ledger["台帳<br/>(名前, ポート, Owner)"]
+        dnssd["dns-sd<br/>mDNS広告"]
     end
 ```
 
-- The CLI reserves a free port, starts your dev server with it, and registers
-  the guest in the ledger. Output is teed to a log file agents can read.
-- A daemon binds port 80 (no sudo needed on macOS) and proxies each
-  `<name>.local` request — including WebSockets, so HMR works — to the right
-  port.
-- Each name is advertised over mDNS with the system `dns-sd` tool, so every
-  Apple device (and most other modern devices) on the network resolves it. Nothing
-  leaves your LAN; there is no tunnel and no external DNS.
+- CLIが空きポートを予約してdev serverを起動し、台帳にGuestとして登録します。
+  出力はログファイルにもteeされ、エージェントが読めます。
+- デーモンがポート80をbind(macOSではsudo不要)し、`<名前>.local`への
+  リクエストを正しいポートへ中継します。WebSocketも中継するのでHMRが動きます。
+- 名前はmacOS標準の`dns-sd`でmDNS広告されるので、ネットワーク上のApple製
+  デバイス(とその他の最近のデバイスの多く)で名前解決できます。LANの外には
+  何も出ません。トンネルも外部DNSもなしです。
 
 ## FAQ
 
-**Can my phone really open `.local` URLs?**
-iPhones, iPads, and Macs resolve mDNS natively. Modern Android does too.
-These URLs will not resolve on networks that block multicast (including some
-corporate and guest Wi-Fi) or over a VPN — yado is built for trusted
-home/office networks.
+**本当にスマホで`.local`が開ける?**
+iPhone、iPad、MacはmDNSによる名前解決に標準対応しています。最近のAndroidも
+対応しています。マルチキャストを遮断するネットワーク(一部の社内/ゲスト
+Wi-Fi)とVPN越しでは解決できません。yadoは信頼できる自宅/事務所の
+ネットワーク向けです。
 
-**What about VR headsets (Quest)?**
-For WebXR you need a secure context anyway; the practical route is
-`adb reverse tcp:80 tcp:80`, then open `http://localhost/` on the headset.
-Deeper VR integration is on the v2 list.
+**VRヘッドセット(Quest)は?**
+WebXRにはどのみちsecure contextが必要なので、現実的なのは
+`adb reverse tcp:80 tcp:80`してヘッドセットで`http://localhost/`を開く方法
+です。VR向けの統合はv2の候補です。
 
-**Why HTTP only?**
-For LAN dev viewing, HTTPS buys nothing except certificate pain on every
-device. If you need a secure-context API on the phone, that's the one case
-where yado won't help yet (also on the v2 list).
+**なぜHTTPだけ?**
+LAN内での表示確認では、HTTPSにすると増えるのは各デバイスへ証明書を導入する
+手間だけだからです。スマホでsecure context必須のAPIを試したい場合だけは
+今のyadoでは足りません(これもv2の候補です)。
 
-**Why macOS only?**
-v1 leans on macOS guarantees: unprivileged port 80 and the built-in `dns-sd`.
-Linux support (pure-JS mDNS) remains feasible by design.
+**なぜmacOSだけ?**
+v1はmacOSの保証(特権なしでポート80を使えること、標準の`dns-sd`)に寄りかかって
+います。Linux対応(純JSのmDNS)は、後から追加できる設計を保っています。
 
-## Prior art
+## 先行プロジェクト
 
-[hotel](https://github.com/typicode/hotel) pioneered "dev servers behind local
-domains" (unmaintained, no LAN access).
-[localias](https://github.com/peterldowns/localias) does aliases + HTTPS + mDNS
-very well as a standalone Go binary, but doesn't manage processes or ports.
-[LocalCan](https://www.localcan.com/) is a polished commercial GUI.
-[OrbStack](https://orbstack.dev/) solves this beautifully for containers.
-yado's angle: port arbitration + names + an ownership ledger, designed for
-workflows shared by humans and agents, and small enough to ship as a skill.
+[hotel](https://github.com/typicode/hotel)は、ローカルドメイン経由でdev server
+にアクセスする仕組みをいち早く形にしました(メンテ停止、LAN共有なし)。
+[localias](https://github.com/peterldowns/localias)はエイリアス、HTTPS、mDNSを
+単一のGoバイナリで実現していますが、プロセスとポートは管理しません。
+[LocalCan](https://www.localcan.com/)は完成度の高い商用GUI、
+[OrbStack](https://orbstack.dev/)はコンテナ向けに同じ問題をきれいに解決して
+います。yadoの立ち位置は、ポート調停と名前と所有の台帳を、人間とエージェント
+が混在するワークフロー向けに、スキルとして配布できる軽さで提供することです。
 
-## License
+## ライセンス
 
 [MIT](LICENSE)
