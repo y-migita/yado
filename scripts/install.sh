@@ -27,7 +27,8 @@ TMP_FILE="$(mktemp "${TMPDIR:-/tmp}/yado-install.XXXXXX")"
 trap 'rm -f "$TMP_FILE"' EXIT
 
 echo "yado: $ASSET をダウンロードしています..."
-if ! curl -fsSL "$URL" -o "$TMP_FILE"; then
+# 進捗バーを出し、停滞した接続(30秒間10KB/s未満)は待ち続けずに失敗させる
+if ! curl -f#SL --speed-limit 10240 --speed-time 30 "$URL" -o "$TMP_FILE"; then
   echo "yado: ダウンロードに失敗しました: $URL" >&2
   exit 1
 fi

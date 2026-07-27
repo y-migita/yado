@@ -33,7 +33,8 @@ mkdir -p "$(dirname "$BIN_PATH")"
 TMP_FILE="$(mktemp "${TMPDIR:-/tmp}/yado-bin.XXXXXX")"
 trap 'rm -f "$TMP_FILE"' EXIT
 
-if ! curl -fsSL "$URL" -o "$TMP_FILE"; then
+# 停滞した接続(30秒間10KB/s未満)は待ち続けずに失敗させる
+if ! curl -fsSL --speed-limit 10240 --speed-time 30 "$URL" -o "$TMP_FILE"; then
   echo "yado: バイナリの取得に失敗しました: $URL" >&2
   echo "yado: ネットワークを確認したうえで、次を手動で実行してください:" >&2
   echo "  bash $SCRIPT_DIR/../scripts/install.sh" >&2
