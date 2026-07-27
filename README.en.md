@@ -45,12 +45,11 @@ an inn.
 - **Agent-native** — ships as an [Agent Skill](https://skills.sh): Claude Code
   and Codex learn the rules automatically: reuse running servers, never kill
   processes directly, ask before stopping servers they don't own
-- **Zero sudo, zero dependencies** — macOS is all you need; no runtime to
-  install
+- **Zero sudo, zero dependencies** — macOS is all you need
 
 ## Quick start
 
-Requirements: macOS. No runtime to install — not even Bun.
+Requirements: macOS.
 
 ```bash
 # for yourself — install the standalone binary (no sudo)
@@ -59,10 +58,6 @@ curl -fsSL https://raw.githubusercontent.com/y-migita/yado/main/scripts/install.
 # for AI agents (Claude Code, Codex, Cursor, ...) — installs the skill
 npx skills add y-migita/yado
 ```
-
-Agents using the skill run on Bun when it's present and download the
-standalone binary on first run when it isn't. You only need Bun to
-develop yado itself.
 
 Then, in any project:
 
@@ -109,39 +104,6 @@ flowchart LR
 - Each name is advertised over mDNS with the system `dns-sd` tool, so every
   Apple device (and most other modern devices) on the network resolves it. Nothing
   leaves your LAN; there is no tunnel and no external DNS.
-
-## FAQ
-
-**Can my phone really open `.local` URLs?**
-iPhones, iPads, and Macs resolve mDNS natively. Modern Android does too.
-These URLs will not resolve on networks that block multicast (including some
-corporate and guest Wi-Fi) or over a VPN — yado is built for trusted
-home/office networks.
-
-**What about VR headsets (Quest)?**
-For WebXR you need a secure context anyway; the practical route is
-`adb reverse tcp:80 tcp:80`, then open `http://localhost/` on the headset.
-Deeper VR integration is on the v2 list.
-
-**Why HTTP only?**
-For LAN dev viewing, HTTPS buys nothing except certificate pain on every
-device. If you need a secure-context API on the phone, that's the one case
-where yado won't help yet (also on the v2 list).
-
-**Why macOS only?**
-v1 leans on macOS guarantees: unprivileged port 80 and the built-in `dns-sd`.
-Linux support (pure-JS mDNS) remains feasible by design.
-
-## Prior art
-
-[hotel](https://github.com/typicode/hotel) pioneered "dev servers behind local
-domains" (unmaintained, no LAN access).
-[localias](https://github.com/peterldowns/localias) does aliases + HTTPS + mDNS
-very well as a standalone Go binary, but doesn't manage processes or ports.
-[LocalCan](https://www.localcan.com/) is a polished commercial GUI.
-[OrbStack](https://orbstack.dev/) solves this beautifully for containers.
-yado's angle: port arbitration + names + an ownership ledger, designed for
-workflows shared by humans and agents, and small enough to ship as a skill.
 
 ## License
 
