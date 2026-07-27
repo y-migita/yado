@@ -645,7 +645,7 @@ async function stopCommand(args: string[]): Promise<number> {
   const callerTty = processTty(process.pid);
   if (callerTty !== guest.owner.tty && !force) {
     console.error(
-      "他人のGuestです。ユーザーに確認してから`--force`を使ってください",
+      "このGuestは別のOwnerが起動しています。ユーザーに確認した上で --force を付けて再実行してください",
     );
     return 3;
   }

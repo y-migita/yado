@@ -90,8 +90,8 @@ PGID="$(
 echo "[smoke] registry contains $NAME (pgid $PGID)"
 
 bun "$ROOT_DIR/tests/fixtures/ws-client.ts" "ws://$NAME.local/ws"
-# Bun 1.3.14のクライアントWebSocket close(code, reason)はreasonを送信しないため、
-# frontend→backend方向はコードのみ検証する。
+# Bun 1.3.14のクライアント側では、WebSocketのclose(code, reason)がreasonを送信しないため、
+# フロントエンドからバックエンドへの方向はコードのみを検証する。
 for _attempt in $(seq 1 20); do
   if grep -Fq "backend-close 4002" "$SMOKE_ROOT/yado.out"; then
     break
