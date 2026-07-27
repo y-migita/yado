@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 450 100"
+     role="img" aria-labelledby="title desc" style="color:#747C8C">
+  <title id="title">yado</title>
+  <desc id="desc">A noren curtain beside a hand-drawn yado wordmark.</desc>
+
+  <g aria-hidden="true">
+    <path d="M20 22h96" fill="none" stroke="currentColor" stroke-width="8"
+          stroke-linecap="round"/>
+    <path d="M27 30h82v50H85V56h-5v24H56V56h-5v24H27Z" fill="#C66A4A"/>
+
+    <g fill="none" stroke="currentColor" stroke-width="10"
+       stroke-linecap="round" stroke-linejoin="round">
+      <path d="m140 39 23 27 23-27m-23 27-11 19"/>
+      <path d="M257 49v36m0-19c0-11-8-19-19-19s-20 8-20 19 9 20 20 20 19-9 19-20Z"/>
+      <path d="M329 18v67m0-19c0-11-8-19-19-19s-20 8-20 19 9 20 20 20 19-9 19-20Z"/>
+      <path d="M390 47c-13 0-22 8-22 19s9 20 22 20 22-9 22-20-9-19-22-19Z"/>
+    </g>
+  </g>
+</svg>
